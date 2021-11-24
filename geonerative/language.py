@@ -1,6 +1,7 @@
 import geonerative.Geometric_Category as GC
 import string
 from functools import partial
+
 global_objects = {}
 # TOKENS
 
@@ -33,9 +34,13 @@ KEYWORDS = [
     'OR',
     'NOT',
     'IF',
-    'THEN',
     'ELIF',
     'ELSE',
+    'THEN',
+    'FOR',
+    'TO',
+    'STEP',
+    'WHILE',
     'SHOW',
     'HIDE',
     'create',
@@ -148,6 +153,7 @@ class Position:
     def copy(self):
         return Position(self.index, self.line, self.column, self.file_name, self.file_text)
 
+
 # LEXER
 
 class Lexer:
@@ -164,7 +170,7 @@ class Lexer:
     def make_tokens(self):
         tokens = []
         single_symbol_tokens = {'+': TT_PLUS, '-': TT_MINUS, '*': TT_MUL, '/': TT_DIV, '(': TT_LPAREN, ')': TT_RPAREN,
-                                '^': TT_POW, ':': TT_ANDSYMBOL}
+                                '^': TT_POW, ':': TT_ANDSYMBOL, '#': TT_GEO}
         self.advance()
         while self.current_char:
             if self.current_char in r' \t\n':
@@ -186,8 +192,6 @@ class Lexer:
                 tokens.append(self.make_greater_than())
             elif self.current_char in DIGITS + '.':
                 tokens.append(self.make_number())
-            elif self.current_char == '#':
-                tokens.append(self.make_geo())
             elif self.current_char == '"':
                 tokens.append(self.make_str())
             else:
@@ -197,15 +201,6 @@ class Lexer:
 
         tokens.append(Token(TT_EOF, pos_start=self.pos))
         return tokens, None
-
-    def make_geo(self):
-        id_ = ''
-        pos_start = self.pos.copy()
-        self.advance()
-        while self.current_char and self.current_char in LETTERS_DIGITS + '_':
-            id_ += self.current_char
-            self.advance()
-        return Token(TT_GEO, id_, pos_start, self.pos)
 
     def make_str(self):
         str_ = ''
@@ -309,13 +304,13 @@ class StringNode:
 
 
 class GeoNode:
-    def __init__(self, token):
-        self.token = token
-        self.pos_start = self.token.pos_start
-        self.pos_end = self.token.pos_end
+    def __init__(self, id_node):
+        self.id_node = id_node
+        self.pos_start = self.id_node.pos_start
+        self.pos_end = self.id_node.pos_end
 
     def __repr__(self):
-        return f'{self.token}'
+        return f'(GEO,{self.token})'
 
 
 class VarAccessNode:
@@ -367,7 +362,7 @@ class IfNode:
 class CreateNode:
     def __init__(self, properties, pos_end):
         self.properties = properties
-        self.pos_start = self.properties['id'].pos_start
+        self.pos_start = self.properties['geo'].pos_start
         self.pos_end = pos_end
 
 
@@ -433,7 +428,10 @@ class Parser:
         elif token.type == TT_GEO:
             res.register_advancement()
             self.advance()
-            return res.success(GeoNode(token))
+            geo_expr = res.register(self.expr())
+            if res.error:
+                return res
+            return res.success(GeoNode(geo_expr))
         elif token.type == TT_STR:
             res.register_advancement()
             self.advance()
@@ -460,7 +458,8 @@ class Parser:
 
         elif token.matches(TT_KEYWORD, 'IF'):
             if_expr = res.register(self.if_expr())
-            if res.error: return res
+            if res.error:
+                return res
             return res.success(if_expr)
 
         elif token.matches(TT_KEYWORD, 'create'):
@@ -526,10 +525,10 @@ class Parser:
         if self.current_token.matches(TT_KEYWORD, 'circle'):
             res.register_advancement()
             self.advance()
-            id_expr = res.register(self.expr())
+            geo_expr = res.register(self.expr())
             if res.error:
                 return res
-            properties['id'] = id_expr
+            properties['geo'] = geo_expr
             properties_counter = 0
             if self.current_token.matches(TT_KEYWORD, 'with'):
                 while properties_counter == 0 or self.current_token.type == TT_ANDSYMBOL:
@@ -766,9 +765,9 @@ class Number:
 
 
 class Geo:
-    def __init__(self, id):
-        self.id = id
-        self.obj = GC.global_objects.get(id)
+    def __init__(self, id_):
+        self.id = id_
+        self.obj = global_objects.get(id_)
         self.set_pos()
         self.set_context()
 
@@ -817,7 +816,7 @@ class String:
             return Number(int(self.value != other.value)).set_context(self.context), None
 
     def copy(self):
-        copy = Number(self.value)
+        copy = String(self.value)
         copy.set_pos(self.pos_start, self.pos_end)
         copy.set_context(self.context)
         return copy
@@ -882,8 +881,15 @@ class Interpreter:
         )
 
     def visit_GeoNode(self, node, context):
-        return RTResult().success(
-            Geo(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end)
+        res = RTResult()
+        id_ = res.register(self.visit(node.id_node, context))
+        if res.error:
+            return res
+        elif type(id_) != String:
+            return res.failure(RunTimeError(node.pos_start, node.pos_end, f"Geo id is not a string", context))
+        error = None
+        return res.success(
+            Geo(id_.value).set_context(context).set_pos(node.pos_start, node.pos_end)
         )
 
     def visit_StringNode(self, node, context):
@@ -947,10 +953,9 @@ class Interpreter:
         elif node.op_token.matches(TT_KEYWORD, 'NOT'):
             value, error = value.notted()
         elif node.op_token.matches(TT_KEYWORD, 'SHOW'):
-            value, error = value.show()
+            value.show()
         elif node.op_token.matches(TT_KEYWORD, 'HIDE'):
-            value, error = value.hide()
-
+            value.hide()
         if error:
             return res.failure(error)
         else:
@@ -975,24 +980,24 @@ class Interpreter:
             return res.success(else_value)
         return res.success(None)
 
-
     def visit_CreateNode(self, node, context):
         res = RTResult()
         properties = node.properties
         temp = {}
         if properties.pop('type', None) == 'circle':
-            id = properties.pop('id', 'RANDOM_ID').token.value
-            temp['id_']=id
+            geo = res.register(self.visit(properties.pop('geo', None), context))
+            if res.error:
+                return res
+            id_ = geo.id
+            temp['id_'] = id_
             for property_, value in properties.items():
                 valued_node = res.register(self.visit(value, context))
                 if res.error:
                     return res
-                temp[property_]=valued_node.value
+                temp[property_] = valued_node.value
             properties = temp
-            global_objects["obj_"+properties['id_']] = GC.Geo('circle', properties['id_'], temp)
+            global_objects[properties['id_']] = GC.Geo('circle', properties['id_'], temp)
         return res.success(Geo(temp['id_']).set_context(context).set_pos(node.pos_start, node.pos_end))
-
-
 
 
 # RUN
@@ -1009,7 +1014,6 @@ def run(file_name, text):
     ast = parser.parse()
     if ast.error:
         return None, ast.error
-    print('ok')
     # Run program
     interpreter = Interpreter()
     context = Context('<program>')

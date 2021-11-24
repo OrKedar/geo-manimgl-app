@@ -9,7 +9,7 @@ class Geo:
             self.x_loc, self.y_loc = properties['x_loc'], properties['y_loc']
             self.radius = properties['radius']
             self.color = properties.get('color', '#BBB')
-            self.id = "obj_"+id_
+            self.id = id_
             self.visibility = properties.get('visibility', True)
 
     def __repr__(self):
