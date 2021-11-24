@@ -460,7 +460,7 @@ class Parser:
             res.register_advancement()
             self.advance()
             return res.success(NumberNode(token))
-        if token.type == TT_GEO:
+        elif token.type == TT_GEO:
             res.register_advancement()
             self.advance()
             geo_expr = res.register(self.expr())
@@ -582,19 +582,11 @@ class Parser:
                     self.current_token.pos_start, self.current_token.pos_end,
                     f"Expected geometric type"
                 ))
+        geo_expr = res.register(self.expr())
+        if res.error:
+            return res
+        properties['geo'] = geo_expr
 
-        if self.current_token.type == TT_GEO:
-            res.register_advancement()
-            self.advance()
-            geo_expr = res.register(self.expr())
-            if res.error:
-                return res
-            properties['geo'] = res.success(GeoNode(geo_expr)).node
-        else:
-            return res.failure(InvalidSyntaxError(
-                self.current_token.pos_start, self.current_token.pos_end,
-                f"Expected '#'"
-            ))
         value = geo_expr
         if self.current_token.matches(TT_KWS_GEOMETRIC, KW_WITH):
             properties_counter = 0
@@ -838,6 +830,12 @@ class Geo:
         self.pos_start = pos_start
         self.pos_end = pos_end
         return self
+
+    def copy(self):
+        copy = Geo(self.id)
+        copy.set_pos(self.pos_start, self.pos_end)
+        copy.set_context(self.context)
+        return copy
 
     def show(self, properties):
         self.obj.show()
