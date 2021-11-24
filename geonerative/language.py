@@ -10,7 +10,6 @@ TT_FLOAT = 'FLOAT'
 TT_GEO = 'GEO'
 TT_STR = 'STR'
 TT_IDENTIFIER = 'IDENTIFIER'
-TT_KEYWORD = 'KEYWORD'
 TT_PLUS = 'PLUS'
 TT_MINUS = 'MINUS'
 TT_MUL = 'MUL'
@@ -28,29 +27,60 @@ TT_LPAREN = 'LPAREN'
 TT_RPAREN = 'RPAREN'
 TT_EOF = 'EOF'
 
+# KEYWORDS
+KW_AND = 'AND'
+KW_OR = 'OR'
+KW_NOT = 'NOT'
+KW_IF = 'IF'
+KW_ELIF = 'ELIF'
+KW_ELSE = 'ELSE'
+KW_THEN = 'THEN'
+KW_FOR = 'FOR'
+KW_TO = 'TO'
+KW_STEP = 'STEP'
+KW_WHILE = 'WHILE'
+TT_KWS_LOGICAL = 'KWS_LOGICAL'
+KWS_LOGICAL = [
+    KW_AND, KW_OR, KW_NOT, KW_IF, KW_ELIF, KW_ELSE, KW_THEN, KW_FOR, KW_TO, KW_STEP, KW_WHILE
+]
+
+KW_HIDE = 'hide'
+KW_SHOW = 'show'
+KW_CREATE = 'create'
+KW_CIRCLE = 'circle'
+KW_RECTANGLE = 'rectangle'
+KW_WITH = 'with'
+KW_RADIUS = 'radius'
+KW_X_LOC = 'x_loc'
+KW_Y_LOC = 'y_loc'
+KW_WIDTH = 'width'
+KW_HEIGHT = 'height'
+KW_COLOR = 'color'
+TT_KWS_GEOMETRIC = 'KWS_GEOMETRIC'
+KWS_GEOMETRIC = [
+    KW_WITH
+]
+TT_KWS_GEO_PROPERTIES = 'KWS_GEO_PROPERTIES'
+KWS_GEO_PROPERTIES = [
+    KW_RADIUS, KW_X_LOC, KW_Y_LOC, KW_COLOR, KW_WIDTH, KW_HEIGHT
+]
+TT_KWS_GEO_OBJECTS = 'KWS_GEO_OBJECTS'
+KWS_GEO_OBJECTS = [
+    KW_CIRCLE, KW_RECTANGLE
+]
+KWS_GEO_ACTIONS = [
+    KW_HIDE, KW_SHOW, KW_CREATE
+]
+TT_KWS_GEO_ACTIONS = 'KWS_GEO_ACTIONS'
+KW_LISTS = {
+    TT_KWS_LOGICAL: KWS_LOGICAL, TT_KWS_GEOMETRIC: KWS_GEOMETRIC, TT_KWS_GEO_OBJECTS: KWS_GEO_OBJECTS,
+    TT_KWS_GEO_PROPERTIES: KWS_GEO_PROPERTIES, TT_KWS_GEO_ACTIONS: KWS_GEO_ACTIONS
+}
+TT_KEYWORD = 'KEYWORD'
 KEYWORDS = [
     'VAR',
-    'AND',
-    'OR',
-    'NOT',
-    'IF',
-    'ELIF',
-    'ELSE',
-    'THEN',
-    'FOR',
-    'TO',
-    'STEP',
-    'WHILE',
-    'SHOW',
-    'HIDE',
-    'create',
-    'circle',
-    'with',
-    'radius',
-    'x_loc',
-    'y_loc',
-    'color'
 ]
+KWS_TOKENS = [TT_KWS_LOGICAL, TT_KWS_GEO_ACTIONS, TT_KWS_GEO_OBJECTS, TT_KWS_GEOMETRIC, TT_KWS_GEO_PROPERTIES]
 
 
 class Token:
@@ -240,8 +270,12 @@ class Lexer:
         while self.current_char and self.current_char in LETTERS_DIGITS + '_':
             id_str += self.current_char
             self.advance()
-
-        tok_type = TT_KEYWORD if id_str in KEYWORDS else TT_IDENTIFIER
+        tok_type = TT_IDENTIFIER
+        if id_str in KEYWORDS:
+            tok_type = TT_KEYWORD
+            for tt, kws in KW_LISTS.items():
+                if id_str in kws:
+                    tok_type = tt
         return Token(tok_type, id_str, pos_start, self.pos)
 
     def make_not_equals(self):
@@ -359,10 +393,11 @@ class IfNode:
         self.pos_end = (self.else_case or self.cases[len(self.cases) - 1][1]).pos_end
 
 
-class CreateNode:
-    def __init__(self, properties, pos_end):
+class GeoActionNode:
+    def __init__(self, action, properties, pos_end):
+        self.action = action
         self.properties = properties
-        self.pos_start = self.properties['geo'].pos_start
+        self.pos_start = self.action.pos_start
         self.pos_end = pos_end
 
 
@@ -425,13 +460,21 @@ class Parser:
             res.register_advancement()
             self.advance()
             return res.success(NumberNode(token))
-        elif token.type == TT_GEO:
+        if token.type == TT_GEO:
             res.register_advancement()
             self.advance()
             geo_expr = res.register(self.expr())
             if res.error:
                 return res
             return res.success(GeoNode(geo_expr))
+
+        # elif token.type == TT_GEO:
+        #     res.register_advancement()
+        #     self.advance()
+        #     geo_expr = res.register(self.expr())
+        #     if res.error:
+        #         return res
+        #     return res.success(GeoNode(geo_expr))
         elif token.type == TT_STR:
             res.register_advancement()
             self.advance()
@@ -456,112 +499,129 @@ class Parser:
                     self.current_token.pos_start, self.current_token.pos_end, "Expected ')'"
                 ))
 
-        elif token.matches(TT_KEYWORD, 'IF'):
-            if_expr = res.register(self.if_expr())
+        elif token.type == TT_KWS_LOGICAL:
+            logical_expr = res.register(self.logical_expr())
             if res.error:
                 return res
-            return res.success(if_expr)
+            return res.success(logical_expr)
 
-        elif token.matches(TT_KEYWORD, 'create'):
-            create_expr = res.register(self.create_expr())
+        elif token.type == TT_KWS_GEO_ACTIONS:
+            action_expr = res.register(self.geo_action_expr())
             if res.error:
                 return res
-            return res.success(create_expr)
+            return res.success(action_expr)
 
         return res.failure(InvalidSyntaxError(
             token.pos_start, token.pos_end,
             "Expected int, float, identifier, '+', '-' or '('"
         ))
 
-    def if_expr(self):
+    def logical_expr(self):
         res = ParseResult()
-        cases = []
-        else_case = None
-        res.register_advancement()
-        self.advance()
-        condition = res.register(self.expr())
-        if res.error:
-            return res
-        if not self.current_token.matches(TT_KEYWORD, 'THEN'):
-            return res.failure(InvalidSyntaxError(
-                self.current_token.pos_start, self.current_token.pos_end,
-                f"Expected 'THEN'"
-            ))
-        res.register_advancement()
-        self.advance()
-        expr = res.register(self.expr())
-        if res.error:
-            return res
-        cases.append((condition, expr))
-        while self.current_token.matches(TT_KEYWORD, 'ELIF'):
+        if self.current_token.matches(TT_KWS_LOGICAL, KW_IF):
             res.register_advancement()
             self.advance()
+            cases = []
+            else_case = None
             condition = res.register(self.expr())
             if res.error:
                 return res
-            if not self.current_token.matches(TT_KEYWORD, 'THEN'):
+            if not self.current_token.matches(TT_KWS_LOGICAL, KW_THEN):
                 return res.failure(InvalidSyntaxError(
                     self.current_token.pos_start, self.current_token.pos_end,
-                    f"Expected 'THEN'"
+                    f"Expected '{KW_THEN}'"
                 ))
             res.register_advancement()
             self.advance()
             expr = res.register(self.expr())
-            cases.append((condition, expr))
-        if self.current_token.matches(TT_KEYWORD, 'ELSE'):
-            res.register_advancement()
-            self.advance()
-            else_case = res.register(self.expr())
             if res.error:
                 return res
-        return res.success(IfNode(cases, else_case))
+            cases.append((condition, expr))
+            while self.current_token.matches(TT_KWS_LOGICAL, KW_ELIF):
+                res.register_advancement()
+                self.advance()
+                condition = res.register(self.expr())
+                if res.error:
+                    return res
+                if not self.current_token.matches(TT_KWS_LOGICAL, KW_THEN):
+                    return res.failure(InvalidSyntaxError(
+                        self.current_token.pos_start, self.current_token.pos_end,
+                        f"Expected '{KW_THEN}'"
+                    ))
+                res.register_advancement()
+                self.advance()
+                expr = res.register(self.expr())
+                cases.append((condition, expr))
+            if self.current_token.matches(TT_KWS_LOGICAL, KW_ELSE):
+                res.register_advancement()
+                self.advance()
+                else_case = res.register(self.expr())
+                if res.error:
+                    return res
+            return res.success(IfNode(cases, else_case))
+        else:
+            return res.failure(InvalidSyntaxError(
+                self.current_token.pos_start, self.current_token.pos_end,
+                f"Expected '{KW_IF}'"
+            ))
 
-    def create_expr(self):
+    def geo_action_expr(self):
         res = ParseResult()
         properties = {}
+        action = self.current_token
         res.register_advancement()
         self.advance()
-        properties['type'] = self.current_token.value
-        if self.current_token.matches(TT_KEYWORD, 'circle'):
+        if action.value == KW_CREATE:
+
+            if self.current_token.type == TT_KWS_GEO_OBJECTS:
+                properties['type'] = self.current_token.value
+                res.register_advancement()
+                self.advance()
+            else:
+                return res.failure(InvalidSyntaxError(
+                    self.current_token.pos_start, self.current_token.pos_end,
+                    f"Expected geometric type"
+                ))
+
+        if self.current_token.type == TT_GEO:
             res.register_advancement()
             self.advance()
             geo_expr = res.register(self.expr())
             if res.error:
                 return res
-            properties['geo'] = geo_expr
-            properties_counter = 0
-            if self.current_token.matches(TT_KEYWORD, 'with'):
-                while properties_counter == 0 or self.current_token.type == TT_ANDSYMBOL:
-                    properties_counter += 1
-                    res.register_advancement()
-                    self.advance()
-                    if self.current_token.type == TT_KEYWORD:
-                        property_ = self.current_token.value
-                        res.register_advancement()
-                        self.advance()
-                        if not self.current_token.type == TT_EQUALS:
-                            return res.failure(InvalidSyntaxError(
-                                self.current_token.pos_start, self.current_token.pos_end,
-                                f"Expected '='"
-                            ))
-                        res.register_advancement()
-                        self.advance()
-                        value = res.register(self.expr())
-                        properties[property_] = value
-                    else:
-                        return res.failure(InvalidSyntaxError(
-                            self.current_token.pos_start, self.current_token.pos_end,
-                            f"Expected property"
-                        ))
-                return res.success(CreateNode(properties, value.pos_end))
+            properties['geo'] = res.success(GeoNode(geo_expr)).node
+        else:
             return res.failure(InvalidSyntaxError(
                 self.current_token.pos_start, self.current_token.pos_end,
-                f"Expected keyword 'with'"
+                f"Expected '#'"
             ))
-        return res.failure(InvalidSyntaxError(
-            self.current_token.pos_start, self.current_token.pos_end,
-            f"Expected geometric object"
-        ))
+        value = geo_expr
+        if self.current_token.matches(TT_KWS_GEOMETRIC, KW_WITH):
+            properties_counter = 0
+            while properties_counter == 0 or self.current_token.type == TT_ANDSYMBOL:
+                properties_counter += 1
+                res.register_advancement()
+                self.advance()
+                if self.current_token.type == TT_KWS_GEO_PROPERTIES:
+                    property_ = self.current_token.value
+                    res.register_advancement()
+                    self.advance()
+                    if not self.current_token.type == TT_EQUALS:
+                        return res.failure(InvalidSyntaxError(
+                            self.current_token.pos_start, self.current_token.pos_end,
+                            f"Expected '='"
+                        ))
+                    res.register_advancement()
+                    self.advance()
+                    value = res.register(self.expr())
+                    properties[property_] = value
+                else:
+                    return res.failure(InvalidSyntaxError(
+                        self.current_token.pos_start, self.current_token.pos_end,
+                        f"Expected property"
+                    ))
+        return res.success(GeoActionNode(action, properties, value.pos_end))
+
 
     def power(self):
         return self.binary_op(self.atom, (TT_POW,), self.factor)
@@ -586,8 +646,7 @@ class Parser:
 
     def comp_expr(self):
         res = ParseResult()
-        if self.current_token.matches(TT_KEYWORD, 'NOT') or self.current_token.matches(TT_KEYWORD, 'SHOW') \
-                or self.current_token.matches(TT_KEYWORD, 'HIDE'):
+        if self.current_token.matches(TT_KWS_LOGICAL, 'NOT'):
             op_token = self.current_token
             res.register_advancement()
             self.advance()
@@ -627,7 +686,7 @@ class Parser:
             if res.error: return res
             return res.success(VarAssignNode(var_name, expr))
 
-        node = res.register(self.binary_op(self.comp_expr, ((TT_KEYWORD, 'AND'), (TT_KEYWORD, 'OR'))))
+        node = res.register(self.binary_op(self.comp_expr, ((TT_KWS_LOGICAL, KW_AND), (TT_KWS_LOGICAL, KW_OR))))
         if res.error:
             return res.failure(InvalidSyntaxError(
                 self.current_token.pos_start, self.current_token.pos_end,
@@ -780,11 +839,24 @@ class Geo:
         self.pos_end = pos_end
         return self
 
-    def show(self):
+    def show(self, properties):
         self.obj.show()
 
-    def hide(self):
+    def hide(self, properties):
         self.obj.hide()
+
+    def create(self, properties):
+        global_objects[properties['id_']] = GC.Geo(properties['type'], properties['id_'], properties)
+        self.obj=global_objects[properties['id_']]
+        return self
+
+    def action(self, action, properties):
+        func = {
+            KW_HIDE: self.hide,
+            KW_SHOW: self.show,
+            KW_CREATE: self.create
+        }
+        return func[action](properties)
 
 
 class String:
@@ -887,7 +959,6 @@ class Interpreter:
             return res
         elif type(id_) != String:
             return res.failure(RunTimeError(node.pos_start, node.pos_end, f"Geo id is not a string", context))
-        error = None
         return res.success(
             Geo(id_.value).set_context(context).set_pos(node.pos_start, node.pos_end)
         )
@@ -932,9 +1003,9 @@ class Interpreter:
         }
         if tokens_funcs.get(tok_type):
             result, error = partial(tokens_funcs[tok_type])(right)
-        elif node.token.matches(TT_KEYWORD, 'AND'):
+        elif node.token.matches(TT_KWS_LOGICAL, KW_AND):
             result, error = left.anded_by(right)
-        elif node.token.matches(TT_KEYWORD, 'OR'):
+        elif node.token.matches(TT_KWS_LOGICAL, KW_OR):
             result, error = left.ored_by(right)
 
         if error:
@@ -950,12 +1021,8 @@ class Interpreter:
         error = None
         if node.op_token.type == TT_MINUS:
             value, error = value.multiplied_by(Number(-1))
-        elif node.op_token.matches(TT_KEYWORD, 'NOT'):
+        elif node.op_token.matches(TT_KWS_LOGICAL, KW_NOT):
             value, error = value.notted()
-        elif node.op_token.matches(TT_KEYWORD, 'SHOW'):
-            value.show()
-        elif node.op_token.matches(TT_KEYWORD, 'HIDE'):
-            value.hide()
         if error:
             return res.failure(error)
         else:
@@ -980,29 +1047,30 @@ class Interpreter:
             return res.success(else_value)
         return res.success(None)
 
-    def visit_CreateNode(self, node, context):
+    def visit_GeoActionNode(self, node, context):
         res = RTResult()
         properties = node.properties
         temp = {}
-        if properties.pop('type', None) == 'circle':
-            geo = res.register(self.visit(properties.pop('geo', None), context))
+        geo = res.register(self.visit(properties.pop('geo', None), context))
+        if res.error:
+            return res
+        temp['type'] = properties.pop('type', None)
+        temp['id_'] = geo.id
+        for property_, value in properties.items():
+            valued_node = res.register(self.visit(value, context))
             if res.error:
                 return res
-            id_ = geo.id
-            temp['id_'] = id_
-            for property_, value in properties.items():
-                valued_node = res.register(self.visit(value, context))
-                if res.error:
-                    return res
-                temp[property_] = valued_node.value
-            properties = temp
-            global_objects[properties['id_']] = GC.Geo('circle', properties['id_'], temp)
+            temp[property_] = valued_node.value
+        properties = temp
+        geo.action(node.action.value, properties)
         return res.success(Geo(temp['id_']).set_context(context).set_pos(node.pos_start, node.pos_end))
 
 
 # RUN
 
 def run(file_name, text):
+    for key in KW_LISTS:
+        KEYWORDS.extend(KW_LISTS[key])
     # Genereate tokens
     lexer = Lexer(file_name, text)
     tokens, error = lexer.make_tokens()
