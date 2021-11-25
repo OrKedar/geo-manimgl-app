@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 from random import randint
 from functools import partial
+from geonerative.token_names import *
 
 manim_objects = {}
 log_name = "geonerative\\code_log.txt"
@@ -28,13 +29,19 @@ def read_code(scene, text, log_name_):
     if error:
         print(error.as_string())
     elif result:
-        for id_, obj in global_objects.items():
-            if obj.type == 'circle':
-                arc_center = np.array([obj.x_loc, obj.y_loc, 0])
-                manim_objects[id_] = Circle(radius=obj.radius, arc_center=arc_center, fill_color=obj.color,
-                                            fill_opacity=1.0, stroke_color=obj.color, stroke_opacity=1.0)
-                scene.play(manim_objects[id_].animate.shift(RIGHT * 0), run_time=0.01)
+        draw_objects(scene, global_objects)
+
     return error is None
+
+
+def draw_objects(scene, objects):
+    for id_, obj in global_objects.items():
+        properties=obj.properties
+        if obj.type == 'circle':
+            arc_center = np.array([properties['x_loc'], properties['y_loc'], 0])
+            manim_objects[id_] = Circle(radius=properties['radius'], arc_center=arc_center, fill_color=properties['color'],
+                                        fill_opacity=1.0, stroke_color=properties['color'], stroke_opacity=1.0)
+            scene.play(manim_objects[id_].animate.shift(RIGHT * 0), run_time=0.01)
 
 
 def read_copy_code_from_tk(scene, text_box, log_name_):

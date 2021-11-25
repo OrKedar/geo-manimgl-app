@@ -2,7 +2,7 @@ import numpy as np
 
 # Sizes relevant to default camera frame
 ASPECT_RATIO = 16.0 / 9.0
-FRAME_HEIGHT = 8.0
+FRAME_HEIGHT = 1080.0
 FRAME_WIDTH = FRAME_HEIGHT * ASPECT_RATIO
 FRAME_Y_RADIUS = FRAME_HEIGHT / 2
 FRAME_X_RADIUS = FRAME_WIDTH / 2

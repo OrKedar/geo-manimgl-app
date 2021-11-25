@@ -38,8 +38,10 @@ if __name__ == "__main__":
         if error:
             print(error.as_string())
         else:
-            print(result)
-        print(global_objects)
+            print("result: ",result)
+            print("Objects:\n--------")
+        for key, item in global_objects.items():
+            print(f"id {key} ---- {item}")
         draw(canvas_)
 
 

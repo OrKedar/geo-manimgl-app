@@ -1,86 +1,12 @@
 import geonerative.Geometric_Category as GC
 import string
 from functools import partial
+from geonerative.token_names import *
 
 global_objects = {}
+
+
 # TOKENS
-
-TT_INT = 'INT'
-TT_FLOAT = 'FLOAT'
-TT_GEO = 'GEO'
-TT_STR = 'STR'
-TT_IDENTIFIER = 'IDENTIFIER'
-TT_PLUS = 'PLUS'
-TT_MINUS = 'MINUS'
-TT_MUL = 'MUL'
-TT_DIV = 'DIV'
-TT_POW = 'POW'
-TT_EQUALS = 'EQUALS'
-TT_DEQUALS = 'DEQUALS'
-TT_NEQUALS = 'NEQUALS'
-TT_LTE = 'LTE'
-TT_GTE = 'GTE'
-TT_LT = 'LT'
-TT_GT = 'GT'
-TT_ANDSYMBOL = 'ANDSYMBOL'
-TT_LPAREN = 'LPAREN'
-TT_RPAREN = 'RPAREN'
-TT_EOF = 'EOF'
-
-# KEYWORDS
-KW_AND = 'AND'
-KW_OR = 'OR'
-KW_NOT = 'NOT'
-KW_IF = 'IF'
-KW_ELIF = 'ELIF'
-KW_ELSE = 'ELSE'
-KW_THEN = 'THEN'
-KW_FOR = 'FOR'
-KW_TO = 'TO'
-KW_STEP = 'STEP'
-KW_WHILE = 'WHILE'
-TT_KWS_LOGICAL = 'KWS_LOGICAL'
-KWS_LOGICAL = [
-    KW_AND, KW_OR, KW_NOT, KW_IF, KW_ELIF, KW_ELSE, KW_THEN, KW_FOR, KW_TO, KW_STEP, KW_WHILE
-]
-
-KW_HIDE = 'hide'
-KW_SHOW = 'show'
-KW_CREATE = 'create'
-KW_CIRCLE = 'circle'
-KW_RECTANGLE = 'rectangle'
-KW_WITH = 'with'
-KW_RADIUS = 'radius'
-KW_X_LOC = 'x_loc'
-KW_Y_LOC = 'y_loc'
-KW_WIDTH = 'width'
-KW_HEIGHT = 'height'
-KW_COLOR = 'color'
-TT_KWS_GEOMETRIC = 'KWS_GEOMETRIC'
-KWS_GEOMETRIC = [
-    KW_WITH
-]
-TT_KWS_GEO_PROPERTIES = 'KWS_GEO_PROPERTIES'
-KWS_GEO_PROPERTIES = [
-    KW_RADIUS, KW_X_LOC, KW_Y_LOC, KW_COLOR, KW_WIDTH, KW_HEIGHT
-]
-TT_KWS_GEO_OBJECTS = 'KWS_GEO_OBJECTS'
-KWS_GEO_OBJECTS = [
-    KW_CIRCLE, KW_RECTANGLE
-]
-KWS_GEO_ACTIONS = [
-    KW_HIDE, KW_SHOW, KW_CREATE
-]
-TT_KWS_GEO_ACTIONS = 'KWS_GEO_ACTIONS'
-KW_LISTS = {
-    TT_KWS_LOGICAL: KWS_LOGICAL, TT_KWS_GEOMETRIC: KWS_GEOMETRIC, TT_KWS_GEO_OBJECTS: KWS_GEO_OBJECTS,
-    TT_KWS_GEO_PROPERTIES: KWS_GEO_PROPERTIES, TT_KWS_GEO_ACTIONS: KWS_GEO_ACTIONS
-}
-TT_KEYWORD = 'KEYWORD'
-KEYWORDS = [
-    'VAR',
-]
-KWS_TOKENS = [TT_KWS_LOGICAL, TT_KWS_GEO_ACTIONS, TT_KWS_GEO_OBJECTS, TT_KWS_GEOMETRIC, TT_KWS_GEO_PROPERTIES]
 
 
 class Token:
@@ -200,7 +126,7 @@ class Lexer:
     def make_tokens(self):
         tokens = []
         single_symbol_tokens = {'+': TT_PLUS, '-': TT_MINUS, '*': TT_MUL, '/': TT_DIV, '(': TT_LPAREN, ')': TT_RPAREN,
-                                '^': TT_POW, ':': TT_ANDSYMBOL, '#': TT_GEO}
+                                '^': TT_POW, ',': TT_ANDSYMBOL, '#': TT_GEO}
         self.advance()
         while self.current_char:
             if self.current_char in r' \t\n':
@@ -513,14 +439,15 @@ class Parser:
 
         return res.failure(InvalidSyntaxError(
             token.pos_start, token.pos_end,
-            "Expected int, float, identifier, '+', '-' or '('"
+            "Expected value, identifier, action or '('"
         ))
 
     def logical_expr(self):
         res = ParseResult()
-        if self.current_token.matches(TT_KWS_LOGICAL, KW_IF):
-            res.register_advancement()
-            self.advance()
+        action = self.current_token
+        res.register_advancement()
+        self.advance()
+        if action.matches(TT_KWS_LOGICAL, KW_IF):
             cases = []
             else_case = None
             condition = res.register(self.expr())
@@ -559,6 +486,11 @@ class Parser:
                 if res.error:
                     return res
             return res.success(IfNode(cases, else_case))
+        elif action.matches(TT_KWS_LOGICAL, KW_FOR):
+            pass
+
+        elif action.matches(TT_KWS_LOGICAL, KW_WHILE):
+            pass
         else:
             return res.failure(InvalidSyntaxError(
                 self.current_token.pos_start, self.current_token.pos_end,
@@ -571,8 +503,7 @@ class Parser:
         action = self.current_token
         res.register_advancement()
         self.advance()
-        if action.value == KW_CREATE:
-
+        if action.value in (KW_CREATE, KW_MODIFY, KW_DELETE):
             if self.current_token.type == TT_KWS_GEO_OBJECTS:
                 properties['type'] = self.current_token.value
                 res.register_advancement()
@@ -613,7 +544,6 @@ class Parser:
                         f"Expected property"
                     ))
         return res.success(GeoActionNode(action, properties, value.pos_end))
-
 
     def power(self):
         return self.binary_op(self.atom, (TT_POW,), self.factor)
@@ -732,8 +662,17 @@ class RTResult:
 class Number:
     def __init__(self, value):
         self.value = value
+        self.type = TT_INT if int(value) == value else TT_FLOAT
         self.set_pos()
         self.set_context()
+        self.tokens_funcs = {
+            TT_PLUS: self.added_to, TT_MINUS: self.subtracted_by, TT_MUL: self.multiplied_by,
+            TT_DIV: self.divided_by,
+            TT_POW: self.powered_by,
+            TT_DEQUALS: self.get_comparison_eq, TT_NEQUALS: self.get_comparison_ne,
+            TT_LT: self.get_comparison_lt,
+            TT_LTE: self.get_comparison_lte, TT_GT: self.get_comparison_gt, TT_GTE: self.get_comparison_gte
+        }
 
     # properties
     def set_context(self, context=None):
@@ -748,56 +687,86 @@ class Number:
     def added_to(self, other):
         if isinstance(other, Number):
             return Number(self.value + other.value).set_context(self.context), None
+        return None, RunTimeError(self.pos_start, other.pos_end, f"cannot add Number to {type(other)}", self.context)
 
     def subtracted_by(self, other):
         if isinstance(other, Number):
             return Number(self.value - other.value).set_context(self.context), None
+        return None, RunTimeError(self.pos_start, other.pos_end, f"cannot subtract Number by {type(other)}",
+                                  self.context)
 
     def multiplied_by(self, other):
         if isinstance(other, Number):
-            return Number(self.value * other.value).set_context(self.context), None
+                return Number(self.value * other.value).set_context(self.context), None
+        elif isinstance(other, String):
+                return String(self.value * other.value).set_context(self.context), None
+        elif isinstance(other, List):
+                return List(self.value * other.value).set_context(self.context), None
+        return None, RunTimeError(self.pos_start, other.pos_end, f"cannot multiply Number to {type(other)}",
+                                  self.context)
 
     def divided_by(self, other):
         if isinstance(other, Number):
             if other.value == 0:
                 return None, RunTimeError(other.pos_start, other.pos_end, 'Division by zero', self.context)
             return Number(self.value / other.value).set_context(self.context), None
+        return None, RunTimeError(self.pos_start, other.pos_end, f"cannot divide Number by {type(other)}", self.context)
 
     def powered_by(self, other):
         if isinstance(other, Number):
-            return Number(self.value ** other.value).set_context(self.context), None
+            if self.value >= 0 or other.type == TT_INT:
+                return Number(self.value ** other.value).set_context(self.context), None
+            else:
+                return None, RunTimeError(self.pos_start, other.pos_end,
+                                          f"{other.value} cannot be an exponent for {self.value}", self.context)
+
+        return None, RunTimeError(self.pos_start, other.pos_end, f"{type(other)} cannot be an exponent for Number",
+                                  self.context)
 
     def get_comparison_eq(self, other):
         if isinstance(other, Number):
             return Number(int(self.value == other.value)).set_context(self.context), None
+        return None, self.logical_rterror(other)
 
     def get_comparison_ne(self, other):
         if isinstance(other, Number):
             return Number(int(self.value != other.value)).set_context(self.context), None
+        return None, self.logical_rterror(other)
 
     def get_comparison_lt(self, other):
         if isinstance(other, Number):
             return Number(int(self.value < other.value)).set_context(self.context), None
+        return None, self.logical_rterror(other)
 
     def get_comparison_lte(self, other):
         if isinstance(other, Number):
             return Number(int(self.value <= other.value)).set_context(self.context), None
+        return None, self.logical_rterror(other)
 
     def get_comparison_gt(self, other):
         if isinstance(other, Number):
             return Number(int(self.value > other.value)).set_context(self.context), None
+        return None, self.logical_rterror(other)
 
     def get_comparison_gte(self, other):
         if isinstance(other, Number):
             return Number(int(self.value >= other.value)).set_context(self.context), None
+        return None, self.logical_rterror(other)
+
+    def logical_rterror(self, other):
+        return RunTimeError(self.pos_start, other.pos_end, f"cannot compare Number and {type(other)}", self.context)
 
     def anded_by(self, other):
         if isinstance(other, Number):
             return Number(int(self.value and other.value)).set_context(self.context), None
+        return None, RunTimeError(self.pos_start, other.pos_end, f"cannot apply logical gates to {type(other)}",
+                                  self.context)
 
     def ored_by(self, other):
         if isinstance(other, Number):
             return Number(int(self.value or other.value)).set_context(self.context), None
+        return None, RunTimeError(self.pos_start, other.pos_end, f"cannot apply logical gates to {type(other)}",
+                              self.context)
 
     def notted(self):
         return Number(1 if self.value == 0 else 0).set_context(self.context), None
@@ -821,6 +790,12 @@ class Geo:
         self.obj = global_objects.get(id_)
         self.set_pos()
         self.set_context()
+        self.tokens_funcs = {
+            TT_DEQUALS: self.get_comparison_eq, TT_NEQUALS: self.get_comparison_ne
+        }
+
+    def __repr__(self):
+        return self.obj.__repr__() if self.obj.__repr__() == "" else f"#{str(self.id)}"
 
     def set_context(self, context=None):
         self.context = context
@@ -830,6 +805,16 @@ class Geo:
         self.pos_start = pos_start
         self.pos_end = pos_end
         return self
+
+    def get_comparison_eq(self, other):
+        if isinstance(other, Geo):
+            return Number(int(self.id == other.id)).set_context(self.context), None
+        return Number(0), None
+
+    def get_comparison_ne(self, other):
+        if isinstance(other, Number):
+            return Number(int(self.id != other.id)).set_context(self.context), None
+        return Number(1), None
 
     def copy(self):
         copy = Geo(self.id)
@@ -845,14 +830,27 @@ class Geo:
 
     def create(self, properties):
         global_objects[properties['id_']] = GC.Geo(properties['type'], properties['id_'], properties)
-        self.obj=global_objects[properties['id_']]
+        self.obj = global_objects[properties['id_']]
+        return self
+
+    def modify(self, properties):
+        if self.obj:
+            self.obj.modify(properties)
+            return self
+        else:
+            return self.create(properties)
+
+    def delete(self, properties):
+        global_objects.pop(self.id, None)
         return self
 
     def action(self, action, properties):
         func = {
             KW_HIDE: self.hide,
             KW_SHOW: self.show,
-            KW_CREATE: self.create
+            KW_CREATE: self.create,
+            KW_MODIFY: self.modify,
+            KW_DELETE: self.delete,
         }
         return func[action](properties)
 
@@ -862,6 +860,10 @@ class String:
         self.value = value
         self.set_pos()
         self.set_context()
+        self.tokens_funcs = {
+            TT_PLUS: self.added_to, TT_MUL: self.multiplied_by,
+            TT_DEQUALS: self.get_comparison_eq, TT_NEQUALS: self.get_comparison_ne,
+        }
 
     # properties
     def set_context(self, context=None):
@@ -876,14 +878,24 @@ class String:
     def added_to(self, other):
         if isinstance(other, String):
             return String(self.value + other.value).set_context(self.context), None
+        return None, RunTimeError(self.pos_start, other.pos_end, f"cannot add {type(other)} to String",
+                                  self.context)
+
+    def multiplied_by(self, other):
+        if isinstance(other, Number) and other.value >= 0 and other.type == TT_INT:
+            return String(other.value * self.value).set_context(self.context), None
+        return None, RunTimeError(self.pos_start, other.pos_end, f"cannot multiply String by {type(other)}",
+                                  self.context)
 
     def get_comparison_eq(self, other):
         if isinstance(other, String):
             return Number(int(self.value == other.value)).set_context(self.context), None
+        return Number(0), None
 
     def get_comparison_ne(self, other):
         if isinstance(other, String):
             return Number(int(self.value != other.value)).set_context(self.context), None
+        return Number(1), None
 
     def copy(self):
         copy = String(self.value)
@@ -893,6 +905,12 @@ class String:
 
     def __repr__(self):
         return str(self.value)
+
+
+class List: pass
+
+
+class Dictionary: pass
 
 
 # CONTEXT
@@ -993,14 +1011,9 @@ class Interpreter:
             return res
         right = res.register(self.visit(node.right_node, context))
         tok_type = node.token.type
-        tokens_funcs = {
-            TT_PLUS: left.added_to, TT_MINUS: left.subtracted_by, TT_MUL: left.multiplied_by, TT_DIV: left.divided_by,
-            TT_POW: left.powered_by,
-            TT_DEQUALS: left.get_comparison_eq, TT_NEQUALS: left.get_comparison_ne, TT_LT: left.get_comparison_lt,
-            TT_LTE: left.get_comparison_lte, TT_GT: left.get_comparison_gt, TT_GTE: left.get_comparison_gte
-        }
+        tokens_funcs = left.tokens_funcs
         if tokens_funcs.get(tok_type):
-            result, error = partial(tokens_funcs[tok_type])(right)
+            result, error = tokens_funcs[tok_type](right)
         elif node.token.matches(TT_KWS_LOGICAL, KW_AND):
             result, error = left.anded_by(right)
         elif node.token.matches(TT_KWS_LOGICAL, KW_OR):
@@ -1067,8 +1080,12 @@ class Interpreter:
 # RUN
 
 def run(file_name, text):
+    # Initiate KEYWORDS
     for key in KW_LISTS:
         KEYWORDS.extend(KW_LISTS[key])
+
+    # Present global_objects better
+
     # Genereate tokens
     lexer = Lexer(file_name, text)
     tokens, error = lexer.make_tokens()
