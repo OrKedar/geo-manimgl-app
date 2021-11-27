@@ -2,7 +2,6 @@ import geonerative.Geometric_Category as GC
 import string
 from functools import partial
 from geonerative.token_names import *
-
 global_objects = {}
 
 
@@ -125,8 +124,11 @@ class Lexer:
 
     def make_tokens(self):
         tokens = []
-        single_symbol_tokens = {'+': TT_PLUS, '-': TT_MINUS, '*': TT_MUL, '/': TT_DIV, '(': TT_LPAREN, ')': TT_RPAREN,
-                                '^': TT_POW, ',': TT_ANDSYMBOL, '#': TT_GEO}
+        single_symbol_tokens = {'+': TT_PLUS, '*': TT_MUL, '/': TT_DIV, '(': TT_LPAREN, ')': TT_RPAREN,
+                                '^': TT_POW, ',': TT_COMMA, '#': TT_GEO}
+        multi_symbol_tokens = {
+            '=': self.make_equals, '<': self.make_less_than, '>': self.make_greater_than, '-': self.make_minus,
+        }
         self.advance()
         while self.current_char:
             if self.current_char in r' \t\n':
@@ -140,16 +142,16 @@ class Lexer:
                 token, error = self.make_not_equals()
                 if error: return [], error
                 tokens.append(token)
-            elif self.current_char == '=':
-                tokens.append(self.make_equals())
-            elif self.current_char == '<':
-                tokens.append(self.make_less_than())
-            elif self.current_char == '>':
-                tokens.append(self.make_greater_than())
             elif self.current_char in DIGITS + '.':
                 tokens.append(self.make_number())
-            elif self.current_char == '"':
-                tokens.append(self.make_str())
+            elif multi_symbol_tokens.get(self.current_char):
+                tokens.append(multi_symbol_tokens[self.current_char]())
+
+            elif self.current_char in ('"', "'"):
+                new_tokens, error = self.make_str()
+                if error:
+                    return [], error
+                tokens.extend(new_tokens)
             else:
                 pos_start = self.pos.copy()
                 char = self.current_char
@@ -160,14 +162,15 @@ class Lexer:
 
     def make_str(self):
         str_ = ''
+        bracket = self.current_char
         pos_start = self.pos.copy()
         self.advance()
-        while self.current_char and self.current_char != '"':
+        while self.current_char and self.current_char != bracket:
             str_ += self.current_char
             self.advance()
         if self.current_char == '"':
             self.advance()
-            return Token(TT_STR, str_, pos_start, self.pos)
+            return [Token(TT_STR, str_, pos_start, self.pos)], None
         return None, ExpectedCharError(pos_start, self.pos, "'" + '"' + "'")
 
     def make_number(self):
@@ -238,6 +241,15 @@ class Lexer:
         if self.current_char == '=':
             self.advance()
             token_type = TT_GTE
+        return Token(token_type, pos_start=pos_start, pos_end=self.pos)
+
+    def make_minus(self):
+        token_type = TT_MINUS
+        pos_start = self.pos.copy()
+        self.advance()
+        if self.current_char == '>':
+            self.advance()
+            token_type = TT_ARROW
         return Token(token_type, pos_start=pos_start, pos_end=self.pos)
 
 
@@ -327,6 +339,31 @@ class GeoActionNode:
         self.pos_end = pos_end
 
 
+class FuncDefNode:
+    def __init__(self, var_name_token, arg_name_tokens, body_node):
+        self.var_name_token = var_name_token
+        self.arg_name_tokens = arg_name_tokens
+        self.body_node = body_node
+        if self.var_name_token:
+            self.pos_start = self.var_name_token.pos_start
+        elif len(self.arg_name_tokens) > 0:
+            self.pos_start = self.arg_name_tokens[0].pos_start
+        else:
+            self.pos_start = self.body_node.pos_start
+        self.pos_end = self.body_node.pos_end
+
+
+class CallFuncNode:
+    def __init__(self, node_to_call, arg_nodes):
+        self.node_to_call = node_to_call
+        self.arg_nodes = arg_nodes
+        self.pos_start = self.node_to_call.pos_start
+        if len(self.arg_nodes) > 0:
+            self.pos_end = self.arg_nodes[len(self.arg_nodes) - 1].pos_end
+        else:
+            self.pos_end = self.node_to_call.pos_end
+
+
 # PARSER
 
 class ParseResult:
@@ -339,6 +376,8 @@ class ParseResult:
         self.advance_count += 1
 
     def register(self, res):
+        if not res:
+            return "a"
         self.advance_count += res.advance_count
         if res.error:
             self.error = res.error
@@ -379,6 +418,41 @@ class Parser:
 
     #####################################
 
+    def call_func(self):
+        res = ParseResult()
+        atom = res.register(self.atom())
+        if res.error:
+            return res
+        if self.current_token.type == TT_LPAREN:
+            res.register_advancement()
+            self.advance()
+            arg_nodes = []
+            if self.current_token == TT_RPAREN:
+                res.register_advancement()
+                self.advance()
+            else:
+                arg_nodes.append(res.register(self.expr()))
+                if res.error:
+                    return res.failure(InvalidSyntaxError(
+                        self.current_token.pos_start, self.current_token.pos_end,
+                        f"Expected ')', 'VAR', '{KW_IF}' int, float, identifier, '+', '-', or '('"
+                    ))
+                while self.current_token.type == TT_COMMA:
+                    res.register_advancement()
+                    self.advance()
+                    arg_nodes.append(res.register(self.expr()))
+                    if res.error:
+                        return res
+                if self.current_token.type != TT_RPAREN:
+                    return res.failure(InvalidSyntaxError(
+                        self.current_token.pos_start, self.current_token.pos_end,
+                        f"Expected ',' or ')'"
+                    ))
+                res.register_advancement()
+                self.advance()
+            return res.success(CallFuncNode(atom, arg_nodes))
+        return res.success(atom)
+
     def atom(self):
         res = ParseResult()
         token = self.current_token
@@ -393,14 +467,6 @@ class Parser:
             if res.error:
                 return res
             return res.success(GeoNode(geo_expr))
-
-        # elif token.type == TT_GEO:
-        #     res.register_advancement()
-        #     self.advance()
-        #     geo_expr = res.register(self.expr())
-        #     if res.error:
-        #         return res
-        #     return res.success(GeoNode(geo_expr))
         elif token.type == TT_STR:
             res.register_advancement()
             self.advance()
@@ -409,6 +475,11 @@ class Parser:
             res.register_advancement()
             self.advance()
             return res.success(VarAccessNode(token))
+        elif token.matches(TT_KWS_LOGICAL, KW_FUNCTION):
+            func_def = res.register(self.func_def())
+            if res.error:
+                return res
+            return res.success(func_def)
 
         elif token.type == TT_LPAREN:
             res.register_advancement()
@@ -440,6 +511,76 @@ class Parser:
         return res.failure(InvalidSyntaxError(
             token.pos_start, token.pos_end,
             "Expected value, identifier, action or '('"
+        ))
+
+    def func_def(self):
+        res = ParseResult()
+        if not self.current_token.matches(TT_KWS_LOGICAL, KW_FUNCTION):
+            return res.failure(InvalidSyntaxError(
+                self.current_token.pos_start, self.current_token.pos_end,
+                f"Expected '{KW_FUNCTION}'"
+            ))
+        res.register_advancement()
+        self.advance()
+        if self.current_token.type == TT_IDENTIFIER:
+            var_name_token = self.current_token
+            res.register_advancement()
+            self.advance()
+            if self.current_token.type != TT_LPAREN:
+                return res.failure(InvalidSyntaxError(
+                    self.current_token.pos_start, self.current_token.pos_end,
+                    f"Expected '('"
+                ))
+        else:
+            var_name_token = None
+            if self.current_token.type != TT_LPAREN:
+                return res.failure(InvalidSyntaxError(
+                    self.current_token.pos_start, self.current_token.pos_end,
+                    f"Expected '('"
+                ))
+        res.register_advancement()
+        self.advance()
+        arg_name_tokens = []
+        if self.current_token.type == TT_IDENTIFIER:
+            arg_name_tokens.append(self.current_token)
+            res.register_advancement()
+            self.advance()
+            while self.current_token.type == TT_COMMA:
+                res.register_advancement()
+                self.advance()
+                if self.current_token.type != TT_IDENTIFIER:
+                    return res.failure(InvalidSyntaxError(
+                        self.current_token.pos_start, self.current_token.pos_end,
+                        f"Expected identifier"
+                    ))
+                arg_name_tokens.append(self.current_token)
+                res.register_advancement()
+                self.advance()
+            if self.current_token.type != TT_RPAREN:
+                return res.failure(InvalidSyntaxError(
+                    self.current_token.pos_start, self.current_token.pos_end,
+                    f"Expected ',' or ')'"
+                ))
+        else:
+            if self.current_token.type != TT_RPAREN:
+                return res.failure(InvalidSyntaxError(
+                    self.current_token.pos_start, self.current_token.pos_end,
+                    f"Expected identifier or ')'"
+                ))
+        res.register_advancement()
+        self.advance()
+        if self.current_token.type != TT_ARROW:
+            return res.failure(InvalidSyntaxError(
+                self.current_token.pos_start, self.current_token.pos_end,
+                f"Expected '->'"
+            ))
+        res.register_advancement()
+        self.advance()
+        node_to_return = res.register(self.expr())
+        if res.error:
+            return res
+        return res.success(FuncDefNode(
+            var_name_token, arg_name_tokens, node_to_return
         ))
 
     def logical_expr(self):
@@ -521,7 +662,7 @@ class Parser:
         value = geo_expr
         if self.current_token.matches(TT_KWS_GEOMETRIC, KW_WITH):
             properties_counter = 0
-            while properties_counter == 0 or self.current_token.type == TT_ANDSYMBOL:
+            while properties_counter == 0 or self.current_token.type == TT_COMMA:
                 properties_counter += 1
                 res.register_advancement()
                 self.advance()
@@ -546,7 +687,7 @@ class Parser:
         return res.success(GeoActionNode(action, properties, value.pos_end))
 
     def power(self):
-        return self.binary_op(self.atom, (TT_POW,), self.factor)
+        return self.binary_op(self.call_func, (TT_POW,), self.factor)
 
     def factor(self):
         res = ParseResult()
@@ -612,7 +753,7 @@ class Parser:
         if res.error:
             return res.failure(InvalidSyntaxError(
                 self.current_token.pos_start, self.current_token.pos_end,
-                "Expected 'VAR', int, float, identifier, '+', '-', or '('"
+                f"Expected 'VAR', '{KW_IF}' int, float, identifier, '+', '-', or '('"
             ))
         return res.success(node)
 
@@ -659,22 +800,15 @@ class RTResult:
 
 # VALUES
 
-class Number:
+class Value:
     def __init__(self, value):
         self.value = value
-        self.type = TT_INT if int(value) == value else TT_FLOAT
         self.set_pos()
         self.set_context()
         self.tokens_funcs = {
-            TT_PLUS: self.added_to, TT_MINUS: self.subtracted_by, TT_MUL: self.multiplied_by,
-            TT_DIV: self.divided_by,
-            TT_POW: self.powered_by,
-            TT_DEQUALS: self.get_comparison_eq, TT_NEQUALS: self.get_comparison_ne,
-            TT_LT: self.get_comparison_lt,
-            TT_LTE: self.get_comparison_lte, TT_GT: self.get_comparison_gt, TT_GTE: self.get_comparison_gte
+            TT_DEQUALS: self.get_comparison_eq, TT_NEQUALS: self.get_comparison_ne
         }
 
-    # properties
     def set_context(self, context=None):
         self.context = context
         return self
@@ -683,6 +817,32 @@ class Number:
         self.pos_start = pos_start
         self.pos_end = pos_end
         return self
+
+    def get_comparison_eq(self, other):
+        if isinstance(other, type(self)):
+            return Number(int(self.value == other.value)).set_context(self.context), None
+        return Number(0), None
+
+    def get_comparison_ne(self, other):
+        if isinstance(other, type(self)):
+            return Number(int(self.value != other.value)).set_context(self.context), None
+        return Number(1), None
+
+
+class Number(Value):
+    def __init__(self, value):
+        super().__init__(value)
+        self.type = TT_INT if int(value) == value else TT_FLOAT
+        self.tokens_funcs.update({
+            TT_PLUS: self.added_to, TT_MINUS: self.subtracted_by, TT_MUL: self.multiplied_by,
+            TT_DIV: self.divided_by,
+            TT_POW: self.powered_by,
+            TT_DEQUALS: self.get_comparison_eq, TT_NEQUALS: self.get_comparison_ne,
+            TT_LT: self.get_comparison_lt,
+            TT_LTE: self.get_comparison_lte, TT_GT: self.get_comparison_gt, TT_GTE: self.get_comparison_gte
+        })
+
+    # properties
 
     def added_to(self, other):
         if isinstance(other, Number):
@@ -697,11 +857,11 @@ class Number:
 
     def multiplied_by(self, other):
         if isinstance(other, Number):
-                return Number(self.value * other.value).set_context(self.context), None
+            return Number(self.value * other.value).set_context(self.context), None
         elif isinstance(other, String):
-                return String(self.value * other.value).set_context(self.context), None
+            return String(self.value * other.value).set_context(self.context), None
         elif isinstance(other, List):
-                return List(self.value * other.value).set_context(self.context), None
+            return List(self.value * other.value).set_context(self.context), None
         return None, RunTimeError(self.pos_start, other.pos_end, f"cannot multiply Number to {type(other)}",
                                   self.context)
 
@@ -766,7 +926,7 @@ class Number:
         if isinstance(other, Number):
             return Number(int(self.value or other.value)).set_context(self.context), None
         return None, RunTimeError(self.pos_start, other.pos_end, f"cannot apply logical gates to {type(other)}",
-                              self.context)
+                                  self.context)
 
     def notted(self):
         return Number(1 if self.value == 0 else 0).set_context(self.context), None
@@ -784,40 +944,16 @@ class Number:
         return str(self.value)
 
 
-class Geo:
+class Geo(Value):
     def __init__(self, id_):
-        self.id = id_
+        super().__init__(id_)
         self.obj = global_objects.get(id_)
-        self.set_pos()
-        self.set_context()
-        self.tokens_funcs = {
-            TT_DEQUALS: self.get_comparison_eq, TT_NEQUALS: self.get_comparison_ne
-        }
 
     def __repr__(self):
-        return self.obj.__repr__() if self.obj.__repr__() == "" else f"#{str(self.id)}"
-
-    def set_context(self, context=None):
-        self.context = context
-        return self
-
-    def set_pos(self, pos_start=None, pos_end=None):
-        self.pos_start = pos_start
-        self.pos_end = pos_end
-        return self
-
-    def get_comparison_eq(self, other):
-        if isinstance(other, Geo):
-            return Number(int(self.id == other.id)).set_context(self.context), None
-        return Number(0), None
-
-    def get_comparison_ne(self, other):
-        if isinstance(other, Number):
-            return Number(int(self.id != other.id)).set_context(self.context), None
-        return Number(1), None
+        return self.obj.__repr__() if self.obj.__repr__() == "" else f"#{str(self.value)}"
 
     def copy(self):
-        copy = Geo(self.id)
+        copy = Geo(self.value)
         copy.set_pos(self.pos_start, self.pos_end)
         copy.set_context(self.context)
         return copy
@@ -841,7 +977,7 @@ class Geo:
             return self.create(properties)
 
     def delete(self, properties):
-        global_objects.pop(self.id, None)
+        global_objects.pop(self.value, None)
         return self
 
     def action(self, action, properties):
@@ -855,25 +991,17 @@ class Geo:
         return func[action](properties)
 
 
-class String:
+class String(Value):
     def __init__(self, value):
-        self.value = value
-        self.set_pos()
-        self.set_context()
-        self.tokens_funcs = {
+        if not isinstance(value, str):
+            print(type(value),value)
+        super().__init__(value)
+        self.tokens_funcs.update({
             TT_PLUS: self.added_to, TT_MUL: self.multiplied_by,
             TT_DEQUALS: self.get_comparison_eq, TT_NEQUALS: self.get_comparison_ne,
-        }
+        })
 
     # properties
-    def set_context(self, context=None):
-        self.context = context
-        return self
-
-    def set_pos(self, pos_start=None, pos_end=None):
-        self.pos_start = pos_start
-        self.pos_end = pos_end
-        return self
 
     def added_to(self, other):
         if isinstance(other, String):
@@ -907,14 +1035,98 @@ class String:
         return str(self.value)
 
 
-class Tuple: pass
+class Function(Value):
+    def __init__(self, name, body_node, arg_names):
+        super().__init__(name)
+        self.name = name or "<anonymous>"
+        self.body_node = body_node
+        self.arg_names = arg_names
+
+    def execute(self, args):
+        res = RTResult()
+        interpreter = Interpreter()
+        new_context = Context(self.name, self.context, self.pos_start)
+        new_context.symbol_table = SymbolTable(new_context.parent.symbol_table)
+
+        if len(args) > len(self.arg_names):
+            return res.failure(RunTimeError(
+                self.pos_start, self.pos_end,
+                f"{len(args) - len(self.arg_names)} too many args passed into '{self.name}",
+                self.context
+            ))
+        if len(args) < len(self.arg_names):
+            return res.failure(RunTimeError(
+                self.pos_start, self.pos_end,
+                f"{len(self.arg_names) - len(args)} too few args passed into '{self.name}",
+                self.context
+            ))
+        for i in range(len(args)):
+            arg_name = self.arg_names[i]
+            arg_value = args[i]
+            arg_value.set_context(new_context)
+            new_context.symbol_table.set(arg_name, arg_value)
+        value = res.register(interpreter.visit(self.body_node, new_context))
+        if res.error:
+            return res
+        return res.success(value)
+
+    def copy(self):
+        copy = Function(self.name, self.body_node, self.arg_names)
+        copy.set_context(self.context)
+        copy.set_pos(self.pos_start, self.pos_end)
+        return copy
+
+    def __repr__(self):
+        return f"<function {self.name}>"
 
 
-class List: pass
+class BuiltInFunction(Value):
+    def __init__(self, name, action, arg_names):
+        super().__init__(name)
+        self.name = name
+        self.action = action
+        self.arg_names = arg_names
+
+    def execute(self, args):
+        res = RTResult()
+        tuple = ()
+        if len(args) > len(self.arg_names):
+            return res.failure(RunTimeError(
+                self.pos_start, self.pos_end,
+                f"{len(args) - len(self.arg_names)} too many args passed into '{self.name}",
+                self.context
+            ))
+        if len(args) < len(self.arg_names):
+            return res.failure(RunTimeError(
+                self.pos_start, self.pos_end,
+                f"{len(self.arg_names) - len(args)} too few args passed into '{self.name}",
+                self.context
+            ))
+        if res.error:
+            return res
+        result = res.register(self.action(args))
+        if res.error:
+            return res
+        else:
+            return res.success(result)
+
+    def copy(self):
+        copy = BuiltInFunction(self.name, self.action, self.arg_names)
+        copy.set_context(self.context)
+        copy.set_pos(self.pos_start, self.pos_end)
+        return copy
+
+    def __repr__(self):
+        return f"<function {self.name}>"
 
 
-class Dictionary: pass
+class Tuple(Value): pass
 
+
+class List(Value): pass
+
+
+class Dictionary(Value): pass
 
 # CONTEXT
 
@@ -929,9 +1141,9 @@ class Context:
 # SYMBOLTABLE
 
 class SymbolTable:
-    def __init__(self):
+    def __init__(self, parent=None):
         self.symbols = {}
-        self.parent = None
+        self.parent = parent
 
     def get(self, name):
         value = self.symbols.get(name, None)
@@ -951,12 +1163,43 @@ global_symbol_table.set('NULL', Number(0))
 global_symbol_table.set('TRUE', Number(1))
 global_symbol_table.set('FALSE', Number(0))
 
+# BUILTINFUNCTIONS
+
+def ACTION_TO_STR(args):
+    arg =args[0]
+    res=RTResult()
+    if isinstance(arg, String) or isinstance(arg, Number):
+        return res.success(String(str(arg.value)))
+    return res.failure(RunTimeError(arg.pos_start, arg.pos_end, f"Cannot turn {type(arg)} to String", arg.context))
+
+
+def ACTION_TO_INT(args):
+    arg =args[0]
+    res=RTResult()
+    if isinstance(arg, String) or isinstance(arg, Number):
+        return res.success(String(int(float(arg.value))))
+    return res.failure(RunTimeError(arg.pos_start, arg.pos_end, f"Cannot turn {type(arg)} to Int", arg.context))
+
+
+def ACTION_TO_FLOAT(args):
+    arg =args[0]
+    res=RTResult()
+    if isinstance(arg, String) or isinstance(arg, Number):
+        return res.success(String(float(arg.value)))
+    return res.failure(RunTimeError(arg.pos_start, arg.pos_end, f"Cannot turn {type(arg)} to Float", arg.context))
+
+
+global_symbol_table.set(FUNC_TO_FLOAT, BuiltInFunction(FUNC_TO_FLOAT, ACTION_TO_FLOAT, ['s']))
+global_symbol_table.set(FUNC_TO_STR, BuiltInFunction(FUNC_TO_STR, ACTION_TO_STR, ['s']))
+global_symbol_table.set(FUNC_TO_INT, BuiltInFunction(FUNC_TO_INT, ACTION_TO_INT, ['s']))
+
+
 
 # INTERPRETER
 
 class Interpreter:
     def __init__(self):
-        self.a = 0
+        pass
 
     def visit(self, node, context):
         method_name = f'visit_{type(node).__name__}'
@@ -1070,11 +1313,11 @@ class Interpreter:
             return res
         if not isinstance(geo, Geo):
             return res.failure(RunTimeError(geo.pos_start, geo.pos_end, "Geo id should start with '#'", context))
-        if (not geo.obj) and not node.action.matches(TT_KWS_GEO_ACTIONS,KW_CREATE):
+        if (not geo.obj) and not node.action.matches(TT_KWS_GEO_ACTIONS, KW_CREATE):
             return res.failure(RunTimeError(node.pos_start, geo.pos_end,
-                                            f"Cannot {node.action.value} nonexistent Geo object #{geo.id}",context))
+                                            f"Cannot {node.action.value} nonexistent Geo object #{geo.value}", context))
         temp['type'] = properties.pop('type', None)
-        temp['id_'] = geo.id
+        temp['id_'] = geo.value
         for property_, value in properties.items():
             valued_node = res.register(self.visit(value, context))
             if res.error:
@@ -1084,8 +1327,43 @@ class Interpreter:
         geo.action(node.action.value, properties)
         return res.success(Geo(temp['id_']).set_context(context).set_pos(node.pos_start, node.pos_end))
 
+    def visit_FuncDefNode(self, node, context):
+        res = RTResult()
+        func_name = node.var_name_token.value if node.var_name_token else None
+        if func_name in BUILT_IN_FUNCS:
+            return res.failure(RunTimeError(node.pos_start, node.pos_end,
+                                            f"cannot overwrite a built-in function", context))
+        body_node = node.body_node
+        arg_names = [arg_name.value for arg_name in node.arg_name_tokens]
+        func_value = Function(func_name, body_node, arg_names).set_context(context).set_pos(node.pos_start,
+                                                                                            node.pos_end)
+
+        if node.var_name_token:
+            context.symbol_table.set(func_name, func_value)
+        return res.success(func_value)
+
+    def visit_CallFuncNode(self, node, context):
+        res = RTResult()
+        args = []
+        value_to_call = res.register(self.visit(node.node_to_call, context))
+        if res.error:
+            return res
+        value_to_call = value_to_call.copy().set_pos(node.pos_start, node.pos_end)
+        for arg_node in node.arg_nodes:
+            args.append(res.register(self.visit(arg_node, context)))
+            if res.error:
+                return res
+        if isinstance(value_to_call, Function) or isinstance(value_to_call, BuiltInFunction):
+            return_value = res.register(value_to_call.execute(args))
+            if res.error:
+                return res
+            return res.success(return_value)
+        return res.failure(RunTimeError(node.pos_start, node.pos_end,
+                                        f"{value_to_call} is not a function", context))
+
 
 # RUN
+
 
 def run(file_name, text):
     # Initiate KEYWORDS
