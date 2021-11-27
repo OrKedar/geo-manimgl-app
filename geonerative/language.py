@@ -503,7 +503,7 @@ class Parser:
         action = self.current_token
         res.register_advancement()
         self.advance()
-        if action.value in (KW_CREATE, KW_MODIFY, KW_DELETE):
+        if action.value == KW_CREATE:
             if self.current_token.type == TT_KWS_GEO_OBJECTS:
                 properties['type'] = self.current_token.value
                 res.register_advancement()
@@ -907,6 +907,9 @@ class String:
         return str(self.value)
 
 
+class Tuple: pass
+
+
 class List: pass
 
 
@@ -1065,6 +1068,8 @@ class Interpreter:
         geo = res.register(self.visit(properties.pop('geo', None), context))
         if res.error:
             return res
+        if not isinstance(geo, Geo):
+            return res.failure(RunTimeError(geo.pos_start, geo.pos_end, "Geo id should start with '#'", context))
         temp['type'] = properties.pop('type', None)
         temp['id_'] = geo.id
         for property_, value in properties.items():
