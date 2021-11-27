@@ -1070,6 +1070,9 @@ class Interpreter:
             return res
         if not isinstance(geo, Geo):
             return res.failure(RunTimeError(geo.pos_start, geo.pos_end, "Geo id should start with '#'", context))
+        if (not geo.obj) and not node.action.matches(TT_KWS_GEO_ACTIONS,KW_CREATE):
+            return res.failure(RunTimeError(node.pos_start, geo.pos_end,
+                                            f"Cannot {node.action.value} nonexistent Geo object #{geo.id}",context))
         temp['type'] = properties.pop('type', None)
         temp['id_'] = geo.id
         for property_, value in properties.items():

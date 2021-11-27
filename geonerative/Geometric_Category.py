@@ -1,5 +1,6 @@
 from geonerative.token_names import *
 
+
 class Geo:
     def __init__(self, type_, id_, properties):
         self.type = type_
@@ -9,12 +10,13 @@ class Geo:
             self.properties['visibility'] = True
         if self.type == 'rectangle':
             if 'mode' not in self.properties:
-                self.properties['mode']='CENTER'
+                self.properties['mode'] = 'CENTER'
 
     def __repr__(self):
-        if not self.type:
-            return f"noType #{self.id}"
-        result = f"{self.type} #{self.id}"
+        if self.type:
+            result = f"{self.type} #{self.id}"
+        else:
+            result = f"noType #{self.id}"
         for prop, value in self.properties.items():
             if not prop in ('type', 'id_'):
                 result += f" : {prop} = {value}"
@@ -46,12 +48,16 @@ class Geo:
         self.properties['visibility'] = False
 
     def modify(self, properties):
+        if properties.get('type', None):
+            self.type = properties['type']
+        if properties.get('id_', None):
+            self.type = properties['id_']
         self.properties.update(properties)
 
     def draw(self, canvas):
         if not self.properties['visibility']:
             return
-        properties=self.properties
+        properties = self.properties
         match self.type:
             case 'circle':
                 canvas.create_circle(properties['x_loc'], properties['y_loc'],
@@ -60,9 +66,11 @@ class Geo:
             case 'rectangle':
                 match properties['mode']:
                     case 'CENTER':
-                        x_0, y_0=properties['x_loc']-properties['width']/2, properties['y_loc']-properties['height']/2
-                        x_1, y_1=properties['x_loc']+properties['width']/2, properties['y_loc']+properties['height']/2
+                        x_0, y_0 = properties['x_loc'] - properties['width'] / 2, properties['y_loc'] - properties[
+                            'height'] / 2
+                        x_1, y_1 = properties['x_loc'] + properties['width'] / 2, properties['y_loc'] + properties[
+                            'height'] / 2
                     case 'CORNER':
-                        x_0,y_0=properties['x_loc'], properties['y_loc']
-                        x_1,y_1=properties['x_loc']-properties['width'], properties['y_loc']-properties['height']
-                canvas.create_rectangle(x_0,y_0,x_1,y_1, fill=properties['color'])
+                        x_0, y_0 = properties['x_loc'], properties['y_loc']
+                        x_1, y_1 = properties['x_loc'] - properties['width'], properties['y_loc'] - properties['height']
+                canvas.create_rectangle(x_0, y_0, x_1, y_1, fill=properties['color'])
