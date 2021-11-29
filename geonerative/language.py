@@ -2,6 +2,7 @@ import geonerative.Geometric_Category as GC
 import string
 from functools import partial
 from geonerative.token_names import *
+
 global_objects = {}
 
 
@@ -125,7 +126,7 @@ class Lexer:
     def make_tokens(self):
         tokens = []
         single_symbol_tokens = {'+': TT_PLUS, '*': TT_MUL, '/': TT_DIV, '(': TT_LPAREN, ')': TT_RPAREN,
-                                '^': TT_POW, ',': TT_COMMA, '#': TT_GEO}
+                                '^': TT_POW, ',': TT_COMMA, '#': TT_GEO, '$': TT_LISTENER}
         multi_symbol_tokens = {
             '=': self.make_equals, '<': self.make_less_than, '>': self.make_greater_than, '-': self.make_minus,
         }
@@ -286,10 +287,11 @@ class GeoNode:
 
 
 class VarAccessNode:
-    def __init__(self, var_name_token):
+    def __init__(self, var_name_token, listening_to={}):
         self.var_name_token = var_name_token
         self.pos_start = self.var_name_token.pos_start
         self.pos_end = self.var_name_token.pos_end
+        self.listening_to = listening_to
 
 
 class VarAssignNode:
@@ -362,6 +364,20 @@ class CallFuncNode:
             self.pos_end = self.arg_nodes[len(self.arg_nodes) - 1].pos_end
         else:
             self.pos_end = self.node_to_call.pos_end
+
+
+class MutedNode:
+    def __init__(self, value):
+        self.value = value
+        self.pos_start = self.value.pos_start
+        self.pos_end = self.value.pos_end
+
+
+class ListenerNode:
+    def __init__(self, var_name_token):
+        self.var_name_token = var_name_token
+        self.pos_start = self.var_name_token.pos_start
+        self.pos_end = self.var_name_token.pos_end
 
 
 # PARSER
@@ -467,6 +483,17 @@ class Parser:
             if res.error:
                 return res
             return res.success(GeoNode(geo_expr))
+        elif token.type == TT_LISTENER:
+            res.register_advancement()
+            self.advance()
+            token = self.current_token
+            if token.type == TT_IDENTIFIER:
+                res.register_advancement()
+                self.advance()
+                return res.success(ListenerNode(token))
+            return res.failure(InvalidSyntaxError(
+                token.pos_start, self.current_token.pos_end, "Can only listen to identifiers"
+            ))
         elif token.type == TT_STR:
             res.register_advancement()
             self.advance()
@@ -783,11 +810,14 @@ class RTResult:
     def __init__(self):
         self.value = None
         self.error = None
+        self.node = None
+        self.listening_to = set()
 
     def register(self, res):
         if res.error:
             self.error = res.error
-        return res.value
+        self.listening_to.update(res.listening_to)
+        return res.value, res.node
 
     def success(self, value):
         self.value = value
@@ -795,6 +825,14 @@ class RTResult:
 
     def failure(self, error):
         self.error = error
+        return self
+
+    def set_node(self, node):
+        self.node = node
+        return self
+
+    def listen(self, listening_to):
+        self.listening_to.update(listening_to)
         return self
 
 
@@ -978,6 +1016,7 @@ class Geo(Value):
 
     def delete(self, properties):
         global_objects.pop(self.value, None)
+        del new_listeners[self.value]
         return self
 
     def action(self, action, properties):
@@ -994,7 +1033,7 @@ class Geo(Value):
 class String(Value):
     def __init__(self, value):
         if not isinstance(value, str):
-            print(type(value),value)
+            print(type(value), value)
         super().__init__(value)
         self.tokens_funcs.update({
             TT_PLUS: self.added_to, TT_MUL: self.multiplied_by,
@@ -1128,6 +1167,38 @@ class List(Value): pass
 
 class Dictionary(Value): pass
 
+
+# LISTENERS
+
+new_listeners = {}
+listeners = {}
+current_listeners = {}
+
+
+class Follower:
+    def __init__(self, node):
+        self.node = node
+        self.set_pos()
+        self.set_context()
+
+    def set_context(self, context=None):
+        self.context = context
+        return self
+
+    def set_pos(self, pos_start=None, pos_end=None):
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+        return self
+
+    def instance(self):
+        pass
+
+
+class Listener(Value):
+    def __init__(self, value):
+        super().__init__(value)
+
+
 # CONTEXT
 
 class Context:
@@ -1163,27 +1234,28 @@ global_symbol_table.set('NULL', Number(0))
 global_symbol_table.set('TRUE', Number(1))
 global_symbol_table.set('FALSE', Number(0))
 
+
 # BUILTINFUNCTIONS
 
 def ACTION_TO_STR(args):
-    arg =args[0]
-    res=RTResult()
+    arg = args[0]
+    res = RTResult()
     if isinstance(arg, String) or isinstance(arg, Number):
         return res.success(String(str(arg.value)))
     return res.failure(RunTimeError(arg.pos_start, arg.pos_end, f"Cannot turn {type(arg)} to String", arg.context))
 
 
 def ACTION_TO_INT(args):
-    arg =args[0]
-    res=RTResult()
+    arg = args[0]
+    res = RTResult()
     if isinstance(arg, String) or isinstance(arg, Number):
         return res.success(String(int(float(arg.value))))
     return res.failure(RunTimeError(arg.pos_start, arg.pos_end, f"Cannot turn {type(arg)} to Int", arg.context))
 
 
 def ACTION_TO_FLOAT(args):
-    arg =args[0]
-    res=RTResult()
+    arg = args[0]
+    res = RTResult()
     if isinstance(arg, String) or isinstance(arg, Number):
         return res.success(String(float(arg.value)))
     return res.failure(RunTimeError(arg.pos_start, arg.pos_end, f"Cannot turn {type(arg)} to Float", arg.context))
@@ -1192,7 +1264,6 @@ def ACTION_TO_FLOAT(args):
 global_symbol_table.set(FUNC_TO_FLOAT, BuiltInFunction(FUNC_TO_FLOAT, ACTION_TO_FLOAT, ['s']))
 global_symbol_table.set(FUNC_TO_STR, BuiltInFunction(FUNC_TO_STR, ACTION_TO_STR, ['s']))
 global_symbol_table.set(FUNC_TO_INT, BuiltInFunction(FUNC_TO_INT, ACTION_TO_INT, ['s']))
-
 
 
 # INTERPRETER
@@ -1204,7 +1275,8 @@ class Interpreter:
     def visit(self, node, context):
         method_name = f'visit_{type(node).__name__}'
         method = getattr(self, method_name, self.no_visit_method)
-        return method(node, context)
+        value = method(node, context)
+        return value
 
     def no_visit_method(self, node, context):
         raise Exception(f'No visit_{type(node).__name__} method defined')
@@ -1212,23 +1284,31 @@ class Interpreter:
     def visit_NumberNode(self, node, context):
         return RTResult().success(
             Number(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end)
-        )
+        ).set_node(MutedNode(Number(node.token.value)))
 
     def visit_GeoNode(self, node, context):
         res = RTResult()
-        id_ = res.register(self.visit(node.id_node, context))
+        id_, id_node = res.register(self.visit(node.id_node, context))
         if res.error:
             return res
+        if res.listening_to:
+            res.failure(RunTimeError(node.pos_start, node.pos_end, f"Geo id cannot listen", context))
         elif type(id_) != String:
             return res.failure(RunTimeError(node.pos_start, node.pos_end, f"Geo id is not a string", context))
+        result = Geo(id_.value)
         return res.success(
-            Geo(id_.value).set_context(context).set_pos(node.pos_start, node.pos_end)
-        )
+            result.set_context(context).set_pos(node.pos_start, node.pos_end)
+        ).set_node(MutedNode(result))
 
     def visit_StringNode(self, node, context):
         return RTResult().success(
             String(node.token.value).set_context(context).set_pos(node.pos_start, node.pos_end)
-        )
+        ).set_node(MutedNode(String(node.token.value)))
+
+    def visit_MutedNode(self, node, context):
+        return RTResult().success(
+            node.value.copy().set_context(context).set_pos(node.pos_start, node.pos_end)
+        ).set_node(node)
 
     def visit_VarAccessNode(self, node, context):
         res = RTResult()
@@ -1239,23 +1319,47 @@ class Interpreter:
                 RunTimeError(node.pos_start, node.pos_end,
                              f"'{var_name}' is not defined", context))
         value = value.copy().set_pos(node.pos_start, node.pos_end)
-        return res.success(value)
+        return res.success(value).set_node(MutedNode(value))
+
+    def visit_ListenerNode(self, node, context):
+        res = RTResult()
+        var_name = node.var_name_token.value
+        value = context.symbol_table.get(var_name)
+        if not value:
+            return res.failure(
+                RunTimeError(node.pos_start, node.pos_end,
+                             f"'{var_name}' is not defined", context))
+        value = value.copy().set_pos(node.pos_start, node.pos_end)
+        listening_to = {var_name}
+        if listeners.get(var_name, None):
+            listening_to = listening_to | listeners[var_name].listening_to
+        return res.success(value).set_node(node).listen(listening_to)
 
     def visit_VarAssignNode(self, node, context):
         res = RTResult()
         var_name = node.var_name_token.value
-        value = res.register(self.visit(node.value_node, context))
-        if res.error: return res
-
+        value, value_node = res.register(self.visit(node.value_node, context))
+        if res.error:
+            return res
+        res_node = MutedNode(value)
+        if res.listening_to:
+            if var_name in res.listening_to:
+                return res.failure(
+                    RunTimeError(node.pos_start, node.pos_end, f"{var_name} cannot listen to itself", context))
+            new_listeners[var_name] = RTResult().set_node(VarAssignNode(node.var_name_token, value_node)).listen(res.listening_to)
+            res_node = VarAccessNode(node.var_name_token)
+        listeners.pop(var_name, None)
         context.symbol_table.set(var_name, value)
-        return res.success(value)
+        return res.success(value).set_node(res_node)
 
     def visit_BinaryNode(self, node, context):
         res = RTResult()
-        left = res.register(self.visit(node.left_node, context))
+        left, left_node = res.register(self.visit(node.left_node, context))
         if res.error:
             return res
-        right = res.register(self.visit(node.right_node, context))
+        right, right_node = res.register(self.visit(node.right_node, context))
+        if res.error:
+            return res
         tok_type = node.token.type
         tokens_funcs = left.tokens_funcs
         if tokens_funcs.get(tok_type):
@@ -1264,15 +1368,18 @@ class Interpreter:
             result, error = left.anded_by(right)
         elif node.token.matches(TT_KWS_LOGICAL, KW_OR):
             result, error = left.ored_by(right)
-
         if error:
             return res.failure(error)
+        if res.listening_to:
+            res_node = BinaryNode(left_node, node.token, right_node)
         else:
-            return res.success(result.set_pos(node.pos_start, node.pos_end))
+            res_node = MutedNode(result)
+        return res.success(result.set_pos(node.pos_start, node.pos_end)).set_node(res_node)
 
     def visit_UnaryNode(self, node, context):
         res = RTResult()
-        value = res.register(self.visit(node.node, context))
+
+        value, value_node = res.register(self.visit(node.node, context))
         if res.error:
             return res
         error = None
@@ -1282,33 +1389,48 @@ class Interpreter:
             value, error = value.notted()
         if error:
             return res.failure(error)
-        else:
-            return res.success(value.set_pos(node.pos_start, node.pos_end))
+        res_node = node if res.listening_to else MutedNode(value)
+        return res.success(value.set_pos(node.pos_start, node.pos_end)).set_node(res_node)
 
     def visit_IfNode(self, node, context):
         res = RTResult()
         case_index = 0
+        cases = []
+        else_case = None
+        final_expr = None
+        listener = False
         for condition, expr in node.cases:
-            condition_value = res.register(self.visit(condition, context))
+            condition_value, condition_node = res.register(self.visit(condition, context))
             if res.error:
                 return res
-            if condition_value.is_true():
-                expr_value = res.register(self.visit(expr, context))
-                if res.error:
-                    return res
-                return res.success(expr_value)
+            expr_value, expr_node = res.register(self.visit(expr, context))
+            if res.error:
+                return res
+            if not final_expr and expr_value:
+                final_expr = expr_value
+
+            cases.append((condition_node, expr_node))
         if node.else_case:
-            else_value = res.register(self.visit(node.else_case, context))
+            else_value, else_node = res.register(self.visit(node.else_case, context))
             if res.error:
                 return res
-            return res.success(else_value)
-        return res.success(None)
+            if not final_expr:
+                final_expr = else_value
+        else:
+            else_node = None
+        if res.listening_to:
+            res_node = IfNode(cases, else_node)
+        else:
+            res_node = MutedNode(final_expr)
+        return res.success(final_expr).set_node(res_node)
 
     def visit_GeoActionNode(self, node, context):
         res = RTResult()
-        properties = node.properties
+        properties = node.properties.copy()
         temp = {}
-        geo = res.register(self.visit(properties.pop('geo', None), context))
+        node_properties = {}
+        geo_node = properties.pop('geo', None)
+        geo, geo_node = res.register(self.visit(geo_node, context))
         if res.error:
             return res
         if not isinstance(geo, Geo):
@@ -1316,16 +1438,28 @@ class Interpreter:
         if (not geo.obj) and not node.action.matches(TT_KWS_GEO_ACTIONS, KW_CREATE):
             return res.failure(RunTimeError(node.pos_start, geo.pos_end,
                                             f"Cannot {node.action.value} nonexistent Geo object #{geo.value}", context))
+
+        node_properties['geo'] = geo_node
         temp['type'] = properties.pop('type', None)
+        node_properties['type'] = temp['type']
         temp['id_'] = geo.value
         for property_, value in properties.items():
-            valued_node = res.register(self.visit(value, context))
+            valued, node_value = res.register(self.visit(value, context))
             if res.error:
                 return res
-            temp[property_] = valued_node.value
+            temp[property_] = valued.value
+            node_properties[property_] = node_value
         properties = temp
         geo.action(node.action.value, properties)
-        return res.success(Geo(temp['id_']).set_context(context).set_pos(node.pos_start, node.pos_end))
+        if f"#{geo.value}" in res.listening_to:
+            return res.failure(RunTimeError(node.pos_start, geo.pos_end,
+                                            f"#{geo.value} cannot listen to itself", context))
+        if res.listening_to:
+            res_node = GeoActionNode(node.action, node_properties, value.pos_end)
+            new_listeners[f"#{properties['id_']}"] = RTResult().set_node(res_node).listen(res.listening_to)
+        listeners.pop(f"#{properties['id_']}", None)
+        return res.success(Geo(properties['id_']).set_context(context).set_pos(node.pos_start, node.pos_end)).set_node(
+            res_node)
 
     def visit_FuncDefNode(self, node, context):
         res = RTResult()
@@ -1337,27 +1471,33 @@ class Interpreter:
         arg_names = [arg_name.value for arg_name in node.arg_name_tokens]
         func_value = Function(func_name, body_node, arg_names).set_context(context).set_pos(node.pos_start,
                                                                                             node.pos_end)
-
         if node.var_name_token:
             context.symbol_table.set(func_name, func_value)
+
         return res.success(func_value)
 
     def visit_CallFuncNode(self, node, context):
         res = RTResult()
         args = []
-        value_to_call = res.register(self.visit(node.node_to_call, context))
+        listener = False
+        value_to_call, value_node = res.register(self.visit(node.node_to_call, context))
         if res.error:
             return res
         value_to_call = value_to_call.copy().set_pos(node.pos_start, node.pos_end)
-        for arg_node in node.arg_nodes:
-            args.append(res.register(self.visit(arg_node, context)))
+        arg_nodes = []
+        for arg in node.arg_nodes:
+            arg_value, arg_node = res.register(self.visit(arg, context))
+            args.append(arg_value)
             if res.error:
                 return res
+            arg_nodes.append(arg_node)
         if isinstance(value_to_call, Function) or isinstance(value_to_call, BuiltInFunction):
-            return_value = res.register(value_to_call.execute(args))
+            return_value, return_node = res.register(value_to_call.execute(args))
             if res.error:
                 return res
-            return res.success(return_value)
+            if res.listening_to:
+                return_node = CallFuncNode(value_node, arg_nodes)
+            return res.success(return_value).set_node(MutedNode(return_value))
         return res.failure(RunTimeError(node.pos_start, node.pos_end,
                                         f"{value_to_call} is not a function", context))
 
@@ -1387,6 +1527,10 @@ def run(file_name, text):
     interpreter = Interpreter()
     context = Context('<program>')
     context.symbol_table = global_symbol_table
+    current_listeners = listeners.copy()
     result = interpreter.visit(ast.node, context)
-
+    for id_, res in current_listeners.items():
+        interpreter.visit(res.node, context)
+    listeners.update(new_listeners)
+    print("C = ", global_symbol_table.get('C'))
     return result.value, result.error

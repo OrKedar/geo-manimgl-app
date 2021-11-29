@@ -6,7 +6,7 @@ import Geometric_Category as GC
 from language import run as language_run
 from language import global_objects
 
-WIDTH, HEIGHT = 500, 500
+WIDTH, HEIGHT = 200, 200
 
 if __name__ == "__main__":
     root = tk.Tk()
@@ -17,7 +17,7 @@ if __name__ == "__main__":
     artBox = tk.ttk.Frame(root, padding=10)
     artBox.grid(column=1, row=0)
     code_string = tk.StringVar()
-    code_Box = tk.Text(artBox, height=10, width=90)
+    code_Box = tk.Text(artBox, height=10, width=50)
     code_Box.pack()
     code_Box.grid(column=0, row=2)
 
@@ -38,6 +38,7 @@ if __name__ == "__main__":
         if error:
             print(error.as_string())
         else:
+            print(text)
             print("result: ",type(result),': ',result)
             print("Objects:\n--------")
         for key, item in global_objects.items():
