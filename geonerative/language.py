@@ -125,8 +125,11 @@ class Lexer:
 
     def make_tokens(self):
         tokens = []
-        single_symbol_tokens = {'+': TT_PLUS, '*': TT_MUL, '/': TT_DIV, '(': TT_LPAREN, ')': TT_RPAREN,
-                                '^': TT_POW, ',': TT_COMMA, '#': TT_GEO, '$': TT_LISTENER}
+        single_symbol_tokens = {
+            '+': TT_PLUS, '*': TT_MUL, '/': TT_DIV, '(': TT_LPAREN, ')': TT_RPAREN,
+            '^': TT_POW, ',': TT_COMMA, '#': TT_GEO, '$': TT_LISTENER,
+            '[': TT_LBRACK, ']': TT_RBRACK, '{': TT_LCPAREN, '}': TT_RCPAREN
+        }
         multi_symbol_tokens = {
             '=': self.make_equals, '<': self.make_less_than, '>': self.make_greater_than, '-': self.make_minus,
         }
@@ -339,6 +342,12 @@ class GeoActionNode:
         self.properties = properties
         self.pos_start = self.action.pos_start
         self.pos_end = pos_end
+
+
+class ListNode:
+    def __init__(self, elements):
+        pass
+
 
 
 class FuncDefNode:
@@ -1104,10 +1113,10 @@ class Function(Value):
             arg_value = args[i]
             arg_value.set_context(new_context)
             new_context.symbol_table.set(arg_name, arg_value)
-        value = res.register(interpreter.visit(self.body_node, new_context))
+        value, node = res.register(interpreter.visit(self.body_node, new_context))
         if res.error:
             return res
-        return res.success(value)
+        return res.success(value).set_node(node)
 
     def copy(self):
         copy = Function(self.name, self.body_node, self.arg_names)
@@ -1143,11 +1152,11 @@ class BuiltInFunction(Value):
             ))
         if res.error:
             return res
-        result = res.register(self.action(args))
+        result, res_node = res.register(self.action(args))
         if res.error:
             return res
         else:
-            return res.success(result)
+            return res.success(result).set_node(res_node)
 
     def copy(self):
         copy = BuiltInFunction(self.name, self.action, self.arg_names)
@@ -1173,25 +1182,6 @@ class Dictionary(Value): pass
 new_listeners = {}
 listeners = {}
 current_listeners = {}
-
-
-class Follower:
-    def __init__(self, node):
-        self.node = node
-        self.set_pos()
-        self.set_context()
-
-    def set_context(self, context=None):
-        self.context = context
-        return self
-
-    def set_pos(self, pos_start=None, pos_end=None):
-        self.pos_start = pos_start
-        self.pos_end = pos_end
-        return self
-
-    def instance(self):
-        pass
 
 
 class Listener(Value):
@@ -1346,7 +1336,8 @@ class Interpreter:
             if var_name in res.listening_to:
                 return res.failure(
                     RunTimeError(node.pos_start, node.pos_end, f"{var_name} cannot listen to itself", context))
-            new_listeners[var_name] = RTResult().set_node(VarAssignNode(node.var_name_token, value_node)).listen(res.listening_to)
+            new_listeners[var_name] = RTResult().set_node(VarAssignNode(node.var_name_token, value_node)).listen(
+                res.listening_to)
             res_node = VarAccessNode(node.var_name_token)
         listeners.pop(var_name, None)
         context.symbol_table.set(var_name, value)
